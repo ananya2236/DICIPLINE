@@ -1,0 +1,14 @@
+{
+  "name": "discipline-tracker-root",
+  "version": "1.0.0",
+  "description": "Root for Discipline Tracker App",
+  "scripts": {
+    "client": "npm run dev --prefix client",
+    "server": "npm run dev --prefix server",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "install-all": "npm install && npm install --prefix client && npm install --prefix server"
+  },
+  "dependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

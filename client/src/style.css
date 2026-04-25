@@ -1,0 +1,27 @@
+@import "tailwindcss";
+
+@theme {
+  --color-gold: #FFD700;
+  --color-dark-gold: #B8860B;
+  --color-black-soft: #121212;
+}
+
+@layer base {
+  body {
+    @apply bg-black text-white antialiased;
+  }
+}
+
+@layer components {
+  .btn-gold {
+    @apply bg-gold text-black font-bold py-2 px-4 rounded hover:bg-dark-gold transition-colors duration-200;
+  }
+  
+  .card {
+    @apply bg-black-soft border border-gold/20 p-6 rounded-lg;
+  }
+
+  .input-field {
+    @apply bg-black border border-gold/30 rounded px-4 py-2 focus:border-gold outline-none transition-all;
+  }
+}
