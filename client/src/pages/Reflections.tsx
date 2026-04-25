@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, setDoc, doc, Timestamp, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../AuthContext';
 import { MessageSquare, Save, Loader2, Calendar } from 'lucide-react';
-import { clsx } from 'clsx';
 
 const Reflections = () => {
   const { user } = useAuth();

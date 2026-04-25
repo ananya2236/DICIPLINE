@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../AuthContext';
 import { Flame, Target, Award, Calendar, ChevronRight, TrendingUp } from 'lucide-react';
 import { clsx } from 'clsx';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 const StatCard = ({ title, value, subValue, icon: Icon, color }: any) => (
   <div className="card relative overflow-hidden group">
@@ -53,7 +53,6 @@ const Dashboard = () => {
       const today = new Date().toISOString().split('T')[0];
       const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
       
-      let streakBroken = false;
       let checkDate = logs[0]?.date === today || logs[0]?.date === yesterday ? logs[0]?.date : null;
       
       if (checkDate) {
