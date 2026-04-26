@@ -3,7 +3,7 @@ import { collection, query, where, getDocs, setDoc, Timestamp, doc, updateDoc, w
 import { db } from '../firebase';
 import { useAuth } from '../AuthContext';
 import { readBackupJSON, writeBackupJSON } from '../backup';
-import { Plus, Trash2, Loader2, X, Star, ChevronLeft, FolderOpen, Code2, Bookmark, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Loader2, X, Star, ChevronLeft, FolderOpen, Code2, Bookmark } from 'lucide-react';
 import { clsx } from 'clsx';
 
 interface DSANode {
@@ -18,6 +18,83 @@ interface DSANode {
   isFavorite: boolean;
   createdAt: Timestamp;
 }
+
+const hydrateCreatedAt = (value: any) => {
+  if (value instanceof Timestamp) return value;
+  if (value && typeof value.seconds === 'number' && typeof value.nanoseconds === 'number') {
+    return new Timestamp(value.seconds, value.nanoseconds);
+  }
+  return Timestamp.now();
+};
+
+const normalizeNode = (node: any): DSANode => ({
+  ...node,
+  parentId: node.parentId ?? null,
+  isFavorite: Boolean(node.isFavorite),
+  createdAt: hydrateCreatedAt(node.createdAt),
+});
+
+const mergeNodesById = (primary: DSANode[], fallback: DSANode[]) => {
+  const merged = new Map<string, DSANode>();
+
+  fallback.forEach(node => merged.set(node.id, normalizeNode(node)));
+  primary.forEach(node => merged.set(node.id, normalizeNode(node)));
+
+  return Array.from(merged.values());
+};
+
+const DSA_IMPORTS = [
+  { id: 'seed-2026-04-25-1290', dateSolved: '2026-04-25', leetcodeNumber: '1290', name: 'Convert Binary Number in LL', topic: 'Traversal' },
+  { id: 'seed-2026-04-25-876', dateSolved: '2026-04-25', leetcodeNumber: '876', name: 'Middle of Linked List', topic: 'Slow-fast pointer' },
+  { id: 'seed-2026-04-25-83', dateSolved: '2026-04-25', leetcodeNumber: '83', name: 'Remove Duplicates (sorted)', topic: 'Traversal' },
+  { id: 'seed-2026-04-25-203', dateSolved: '2026-04-25', leetcodeNumber: '203', name: 'Remove Elements', topic: 'Traversal' },
+  { id: 'seed-2026-04-25-237', dateSolved: '2026-04-25', leetcodeNumber: '237', name: 'Delete Node in LL', topic: 'Node given' },
+  { id: 'seed-2026-04-26-206', dateSolved: '2026-04-26', leetcodeNumber: '206', name: 'Reverse Linked List', topic: '3 pointer' },
+  { id: 'seed-2026-04-26-141', dateSolved: '2026-04-26', leetcodeNumber: '141', name: 'Linked List Cycle', topic: 'Slow-fast pointer' },
+  { id: 'seed-2026-04-26-160', dateSolved: '2026-04-26', leetcodeNumber: '160', name: 'Intersection of Two LL', topic: '2 pointer' },
+  { id: 'seed-2026-04-26-19', dateSolved: '2026-04-26', leetcodeNumber: '19', name: 'Remove Nth Node from End', topic: 'Slow fast pointer' },
+  { id: 'seed-2026-04-26-21', dateSolved: '2026-04-26', leetcodeNumber: '21', name: 'Merge Two Sorted Lists', topic: 'Dummy node pattern' },
+  { id: 'seed-2026-04-26-82', dateSolved: '2026-04-26', leetcodeNumber: '82', name: 'Remove Duplicates II', topic: 'Dummy node pattern' },
+  { id: 'seed-2026-04-26-86', dateSolved: '2026-04-26', leetcodeNumber: '86', name: 'Partition List', topic: 'Dummy node pattern' },
+] as const;
+
+const LINKED_LIST_CONTAINER_ID = 'seed-container-linked-list';
+const LINKED_LIST_CONTAINER_NAME = 'Linked List';
+const SEED_ORDER_MAP: Map<string, number> = new Map(DSA_IMPORTS.map((seed, idx) => [seed.id, idx] as const));
+
+const seedMatchKey = (node: Pick<DSANode, 'dateSolved' | 'leetcodeNumber' | 'name'>) =>
+  `${node.dateSolved}|${(node.leetcodeNumber ?? '').trim()}|${node.name.trim().toLowerCase()}`;
+
+const seededProblemLabel = (seed: typeof DSA_IMPORTS[number]) => `LC ${seed.leetcodeNumber} - ${seed.name}`;
+
+const formatDisplayDate = (dateKey: string) => {
+  const [year, month, day] = dateKey.split('-');
+  if (!year || !month || !day) return dateKey;
+  return `${day}/${month}/${year}`;
+};
+
+const createLinkedListContainer = (userId: string): DSANode => normalizeNode({
+  id: LINKED_LIST_CONTAINER_ID,
+  userId,
+  parentId: null,
+  type: 'container',
+  name: LINKED_LIST_CONTAINER_NAME,
+  isFavorite: false,
+  createdAt: Timestamp.now(),
+});
+
+const createSeedProblem = (userId: string, seed: typeof DSA_IMPORTS[number], parentId: string) => normalizeNode({
+  id: seed.id,
+  userId,
+  parentId,
+  type: 'problem',
+  name: seededProblemLabel(seed),
+  leetcodeNumber: seed.leetcodeNumber,
+  topic: seed.topic,
+  dateSolved: seed.dateSolved,
+  isFavorite: false,
+  createdAt: Timestamp.now(),
+});
 
 // Node Item Component - Memoized to prevent unnecessary re-renders
 const NodeItem = React.memo(({ node, children, onDelete, onToggleFav, onNavigate }: any) => (
@@ -126,18 +203,103 @@ const DSATracker = () => {
   useEffect(() => {
     if (!user) return;
 
-    setAllNodes(readBackupJSON(backupKey!, []));
+    const backupNodes = readBackupJSON(backupKey!, []).map(normalizeNode);
+    const seedContainer = createLinkedListContainer(user.uid);
+    const seedNodes = DSA_IMPORTS.map(seed => createSeedProblem(user.uid, seed, LINKED_LIST_CONTAINER_ID));
+    setAllNodes(mergeNodesById([seedContainer, ...seedNodes], backupNodes));
 
     (async () => {
       setLoading(true);
       try {
         const q = query(collection(db, 'dsa_nodes'), where('userId', '==', user.uid));
         const snapshot = await getDocs(q);
-        const remoteNodes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as DSANode));
-        setAllNodes(prev => {
-          const merged = remoteNodes.length > 0 ? remoteNodes : prev;
-          return merged;
-        });
+        const remoteNodes = snapshot.docs.map(doc => normalizeNode({ id: doc.id, ...doc.data() }));
+        const seedIdSet: Set<string> = new Set(DSA_IMPORTS.map(seed => seed.id));
+        const remoteNodesAdjusted = remoteNodes.map(node => seedIdSet.has(node.id) ? { ...node, parentId: LINKED_LIST_CONTAINER_ID } : node);
+        const backupNodesAdjusted = backupNodes.map(node => seedIdSet.has(node.id) ? { ...node, parentId: LINKED_LIST_CONTAINER_ID } : node);
+        const allCurrentNodes = mergeNodesById([seedContainer, ...seedNodes], [...backupNodesAdjusted, ...remoteNodesAdjusted]);
+        const remoteIds = new Set(remoteNodes.map(node => node.id));
+        const missingBackupNodes = backupNodes.filter(node => !remoteIds.has(node.id));
+
+        if (missingBackupNodes.length > 0) {
+          await Promise.all(
+            missingBackupNodes.map(node =>
+              setDoc(doc(db, 'dsa_nodes', node.id), {
+                userId: node.userId,
+                parentId: seedIdSet.has(node.id) ? LINKED_LIST_CONTAINER_ID : node.parentId,
+                type: node.type,
+                name: node.name,
+                leetcodeNumber: node.leetcodeNumber ?? '',
+                topic: node.topic ?? '',
+                dateSolved: node.dateSolved ?? '',
+                isFavorite: node.isFavorite,
+                createdAt: node.createdAt,
+              })
+            )
+          );
+        }
+
+        const remoteContainer = remoteNodes.find(node => node.id === LINKED_LIST_CONTAINER_ID);
+        if (!remoteContainer) {
+          await setDoc(doc(db, 'dsa_nodes', LINKED_LIST_CONTAINER_ID), {
+            userId: user.uid,
+            parentId: null,
+            type: 'container',
+            name: LINKED_LIST_CONTAINER_NAME,
+            isFavorite: false,
+            createdAt: seedContainer.createdAt,
+          });
+        }
+
+        const existingKeys = new Set([...remoteNodesAdjusted, ...backupNodesAdjusted].map(seedMatchKey));
+        const missingSeedDefs = DSA_IMPORTS.filter(seed => !existingKeys.has(seedMatchKey(seed)));
+        const rootSeedNodes = remoteNodes.filter(node =>
+          node.type === 'problem' &&
+          DSA_IMPORTS.some(seed => seedMatchKey(seed) === seedMatchKey(node)) &&
+          node.parentId !== LINKED_LIST_CONTAINER_ID
+        );
+
+        if (rootSeedNodes.length > 0) {
+          await Promise.all(
+            rootSeedNodes.map(node =>
+              setDoc(doc(db, 'dsa_nodes', node.id), {
+                userId: node.userId,
+                parentId: LINKED_LIST_CONTAINER_ID,
+                type: node.type,
+                name: node.name,
+                leetcodeNumber: node.leetcodeNumber ?? '',
+                topic: node.topic ?? '',
+                dateSolved: node.dateSolved ?? '',
+                isFavorite: node.isFavorite,
+                createdAt: node.createdAt,
+              })
+            )
+          );
+        }
+
+        if (missingSeedDefs.length > 0) {
+          const seededNodes = missingSeedDefs.map(seed => createSeedProblem(user.uid, seed, LINKED_LIST_CONTAINER_ID));
+
+          await Promise.all(
+            seededNodes.map(node =>
+              setDoc(doc(db, 'dsa_nodes', node.id), {
+                userId: node.userId,
+                parentId: LINKED_LIST_CONTAINER_ID,
+                type: node.type,
+                name: node.name,
+                leetcodeNumber: node.leetcodeNumber ?? '',
+                topic: node.topic ?? '',
+                dateSolved: node.dateSolved ?? '',
+                isFavorite: node.isFavorite,
+                createdAt: node.createdAt,
+              })
+            )
+          );
+
+          setAllNodes(prev => mergeNodesById([...allCurrentNodes, ...seededNodes], prev));
+        } else {
+          setAllNodes(prev => mergeNodesById(allCurrentNodes, prev));
+        }
       } catch (error: any) {
         alert(`Failed to fetch: ${error.message}`);
       } finally {
@@ -155,7 +317,7 @@ const DSATracker = () => {
   const currentId = currentPath[currentPath.length - 1] ?? null;
   
   // Memoize index creation - only recalculate when allNodes changes
-  const { nodeIndex, childrenIndex, sortedChildren, favorites, containerName } = useMemo(() => {
+  const { nodeIndex, childrenIndex, sortedChildren, groupedDateSections, favorites, containerName } = useMemo(() => {
     const nodeIdx: { [key: string]: DSANode } = {};
     const childrenIdx: { [key: string]: DSANode[] } = {};
     
@@ -172,12 +334,33 @@ const DSATracker = () => {
     });
     
     const children = childrenIdx[currentId || 'root'] || [];
+    const groupedSections = children.length > 0 && children.every(n => n.type === 'problem')
+      ? Array.from(
+          children.reduce((acc, node) => {
+            if (!node.dateSolved) return acc;
+            const list = acc.get(node.dateSolved) ?? [];
+            list.push(node);
+            acc.set(node.dateSolved, list);
+            return acc;
+          }, new Map<string, DSANode[]>())
+        )
+          .sort(([a], [b]) => b.localeCompare(a))
+          .map(([date, items]) => ({
+            date,
+            label: formatDisplayDate(date),
+            items: items.sort((a, b) => {
+              const orderA = SEED_ORDER_MAP.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+              const orderB = SEED_ORDER_MAP.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+              return orderA - orderB || a.name.localeCompare(b.name);
+            }),
+          }))
+      : [];
     const favs = allNodes
       .filter(n => n.type === 'problem' && n.isFavorite)
-      .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+      .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
     const name = currentPath.length === 0 ? 'DSA TRACKER' : nodeIdx[currentId]?.name || 'Unknown';
     
-    return { nodeIndex: nodeIdx, childrenIndex: childrenIdx, sortedChildren: children, favorites: favs, containerName: name };
+    return { nodeIndex: nodeIdx, childrenIndex: childrenIdx, sortedChildren: children, groupedDateSections: groupedSections, favorites: favs, containerName: name };
   }, [allNodes, currentId, currentPath.length]);
 
   const handleAddNode = async (e: React.FormEvent, formData: { name: string; leetcodeNumber: string; topic: string; dateSolved: string }) => {
@@ -186,6 +369,7 @@ const DSATracker = () => {
     const kind: 'container' | 'problem' = currentId ? 'problem' : 'container';
     
     const tempId = crypto.randomUUID?.() ?? `temp_${Date.now()}`;
+    const createdAt = Timestamp.now();
     const newNode = { 
       id: tempId, 
       userId: user.uid, 
@@ -193,7 +377,7 @@ const DSATracker = () => {
       type: kind, 
       name: formData.name.trim(), 
       isFavorite: false, 
-      createdAt: Timestamp.now(),
+      createdAt,
       ...(kind === 'problem' && { 
         leetcodeNumber: formData.leetcodeNumber.trim(), 
         topic: formData.topic.trim(),
@@ -213,7 +397,7 @@ const DSATracker = () => {
       type: kind,
       name: newNode.name,
       isFavorite: false,
-      createdAt: Timestamp.now(),
+      createdAt,
       ...(kind === 'problem' && { 
         leetcodeNumber: formData.leetcodeNumber.trim(), 
         topic: formData.topic.trim(),
@@ -287,7 +471,6 @@ const DSATracker = () => {
         </div>
         <div className="flex gap-2">
           {currentPath.length > 0 && <button onClick={() => setCurrentPath([])} className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-white flex items-center gap-1"><ChevronLeft className="w-4 h-4" /> Root</button>}
-          <button onClick={() => { setLoading(true); (async () => { try { const q = query(collection(db, 'dsa_nodes'), where('userId', '==', user!.uid)); const s = await getDocs(q); setAllNodes(s.docs.map(d => ({ id: d.id, ...d.data() } as DSANode))); } finally { setLoading(false); } })(); }} className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-gold flex items-center gap-1"><RefreshCw className="w-4 h-4" /></button>
           <button onClick={() => setShowAddForm(!showAddForm)} className="btn-gold flex items-center gap-2">{showAddForm ? <X className="w-4 h-4" /> : <Plus className="w-4 h-4" />}{currentId ? 'Add Question' : 'Add Container'}</button>
         </div>
       </div>
@@ -301,8 +484,42 @@ const DSATracker = () => {
         </div>
       )}
 
-      <div className="space-y-3">
-        {sortedChildren.length === 0 ? <div className="card text-center p-12 text-gray-500">No items yet.</div> : sortedChildren.map(node => <NodeItem key={node.id} node={node} children={childrenIndex[node.id] || []} onDelete={handleDeleteNode} onToggleFav={toggleFav} onNavigate={(id: string) => setCurrentPath(prev => [...prev, id])} />)}
+      <div className="space-y-4">
+        {groupedDateSections.length > 0 ? (
+          groupedDateSections.map(section => (
+            <div key={section.date} className="space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-black text-gold">{section.label}</span>
+                <div className="h-px flex-1 bg-gray-800"></div>
+              </div>
+              <div className="space-y-3">
+                {section.items.map(node => (
+                  <NodeItem
+                    key={node.id}
+                    node={node}
+                    children={[]}
+                    onDelete={handleDeleteNode}
+                    onToggleFav={toggleFav}
+                    onNavigate={(id: string) => setCurrentPath(prev => [...prev, id])}
+                  />
+                ))}
+              </div>
+            </div>
+          ))
+        ) : sortedChildren.length === 0 ? (
+          <div className="card text-center p-12 text-gray-500">No items yet.</div>
+        ) : (
+          sortedChildren.map(node => (
+            <NodeItem
+              key={node.id}
+              node={node}
+              children={childrenIndex[node.id] || []}
+              onDelete={handleDeleteNode}
+              onToggleFav={toggleFav}
+              onNavigate={(id: string) => setCurrentPath(prev => [...prev, id])}
+            />
+          ))
+        )}
       </div>
 
       {currentPath.length === 0 && favorites.length > 0 && (
