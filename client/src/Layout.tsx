@@ -1,5 +1,5 @@
 import React from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { LayoutDashboard, Calendar, Code, BarChart2, MessageSquare, LogOut, User as UserIcon } from 'lucide-react';
 import { useAuth } from './AuthContext';
 import { clsx, type ClassValue } from 'clsx';
@@ -9,22 +9,27 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const SidebarItem = ({ icon: Icon, label, to, active }: { icon: any, label: string, to: string, active: boolean }) => (
-  <Link
+const SidebarItem = ({ icon: Icon, label, to }: { icon: any, label: string, to: string }) => (
+  <NavLink
     to={to}
-    className={cn(
-      "flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group",
-      active ? "bg-gold text-black" : "text-gray-400 hover:text-gold hover:bg-gold/10"
+    end={to === '/'}
+    className={({ isActive }) => cn(
+      "relative flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group overflow-hidden",
+      isActive ? "bg-gold text-black shadow-[0_0_0_1px_rgba(255,215,0,0.35)]" : "text-gray-400 hover:text-gold hover:bg-gold/10"
     )}
   >
-    <Icon className={cn("w-5 h-5", active ? "text-black" : "group-hover:text-gold")} />
-    <span className="font-medium">{label}</span>
-  </Link>
+    {({ isActive }) => (
+      <>
+        {isActive && <span className="absolute left-0 top-0 h-full w-1 bg-black/70" />}
+        <Icon className={cn("w-5 h-5", isActive ? "text-black" : "group-hover:text-gold")} />
+        <span className="font-medium">{label}</span>
+      </>
+    )}
+  </NavLink>
 );
 
 const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, logout } = useAuth();
-  const location = useLocation();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -50,31 +55,26 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
             icon={LayoutDashboard} 
             label="Dashboard" 
             to="/" 
-            active={location.pathname === '/'} 
           />
           <SidebarItem 
             icon={Calendar} 
             label="Daily Tracker" 
             to="/tracker" 
-            active={location.pathname === '/tracker'} 
           />
           <SidebarItem 
             icon={Code} 
             label="DSA Tracker" 
             to="/dsa" 
-            active={location.pathname === '/dsa'} 
           />
           <SidebarItem 
             icon={BarChart2} 
             label="Stats" 
             to="/stats" 
-            active={location.pathname === '/stats'} 
           />
           <SidebarItem 
             icon={MessageSquare} 
             label="Reflections" 
             to="/reflections" 
-            active={location.pathname === '/reflections'} 
           />
         </nav>
 

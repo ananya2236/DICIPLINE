@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, orderBy, limit } from 'firebase/firestore';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../AuthContext';
+import { readBackupJSON } from '../backup';
 import { Flame, Target, Award, Calendar, ChevronRight, TrendingUp } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useNavigate } from 'react-router-dom';
@@ -20,6 +21,22 @@ const StatCard = ({ title, value, subValue, icon: Icon, color }: any) => (
   </div>
 );
 
+const toDateKey = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const addDays = (date: Date, days: number) =>
+  new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
+
+const isLoggedDay = (score: number | undefined) => (score ?? 0) >= 80;
+
+const normalizeDailyLogs = (raw: any) => {
+  const logs = Array.isArray(raw) ? raw : Object.values(raw || {});
+  return logs
+    .filter(Boolean)
+    .map((log: any) => ({ ...log, score: Number(log.score) || 0 }))
+    .sort((a: any, b: any) => a.date.localeCompare(b.date));
+};
+
 const Dashboard = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -33,67 +50,72 @@ const Dashboard = () => {
   const [recentLogs, setRecentLogs] = useState<any[]>([]);
 
   useEffect(() => {
-    const fetchStats = async () => {
-      if (!user) return;
-      
-      // Fetch Daily Logs for consistency and streaks
-      const q = query(
-        collection(db, 'daily_logs'),
-        where('userId', '==', user.uid),
-        orderBy('date', 'desc'),
-        limit(30)
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const logs: any[] = [];
-      querySnapshot.forEach(doc => logs.push(doc.data()));
-      
-      // Calculate streak
+    if (!user) return;
+
+    const backupDailyKey = `daily_logs_backup:${user.uid}`;
+    const backupDsaKey = `dsa_nodes_backup:${user.uid}`;
+    const backupLogs = normalizeDailyLogs(readBackupJSON(backupDailyKey, {}));
+    const backupDsaNodes = readBackupJSON(backupDsaKey, []);
+
+    const dailyQ = query(collection(db, 'daily_logs'), where('userId', '==', user.uid));
+    const dsaQ = query(collection(db, 'dsa_nodes'), where('userId', '==', user.uid), where('type', '==', 'problem'));
+
+    const unsubscribeDaily = onSnapshot(dailyQ, (snapshot) => {
+      const firestoreLogs = snapshot.docs.map(doc => doc.data());
+      const logs = normalizeDailyLogs([...backupLogs, ...firestoreLogs]);
+      const todayKey = toDateKey(new Date());
+
+      const normalizedScores = new Map<string, number>();
+      logs.forEach(log => normalizedScores.set(log.date, Number(log.score) || 0));
+
       let currentStreak = 0;
-      const today = new Date().toISOString().split('T')[0];
-      const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-      
-      let checkDate = logs[0]?.date === today || logs[0]?.date === yesterday ? logs[0]?.date : null;
-      
-      if (checkDate) {
-        for (let i = 0; i < logs.length; i++) {
-          if (logs[i].score >= 80) {
+      const latestKey = logs.length > 0 ? logs[logs.length - 1].date : null;
+      const latestDate = latestKey ? new Date(`${latestKey}T00:00:00`) : null;
+      const todayDate = new Date(`${todayKey}T00:00:00`);
+
+      let cursor = latestDate;
+      if (cursor) {
+        const diffDays = Math.floor((todayDate.getTime() - cursor.getTime()) / 86400000);
+        if (diffDays === 0 || diffDays === 1) {
+          while (cursor) {
+            const key = toDateKey(cursor);
+            if (!isLoggedDay(normalizedScores.get(key))) break;
             currentStreak++;
-          } else {
-            break;
+            cursor = addDays(cursor, -1);
           }
         }
       }
 
-      // Calculate consistency
-      const weeklyLogs = logs.filter(l => {
-        const d = new Date(l.date);
-        return (Date.now() - d.getTime()) <= 7 * 86400000;
-      });
-      const weeklyConsistency = weeklyLogs.length > 0 
-        ? Math.round((weeklyLogs.reduce((acc, curr) => acc + curr.score, 0) / (weeklyLogs.length * 100)) * 100)
-        : 0;
+      const last7Dates: string[] = [];
+      const last30Dates: string[] = [];
+      for (let i = 0; i < 7; i++) last7Dates.push(toDateKey(addDays(todayDate, -i)));
+      for (let i = 0; i < 30; i++) last30Dates.push(toDateKey(addDays(todayDate, -i)));
 
-      const monthlyConsistency = logs.length > 0
-        ? Math.round((logs.reduce((acc, curr) => acc + curr.score, 0) / (logs.length * 100)) * 100)
-        : 0;
+      const weeklyAverage = last7Dates.reduce((acc, date) => acc + (normalizedScores.get(date) ?? 0), 0) / 7;
+      const monthlyAverage = last30Dates.reduce((acc, date) => acc + (normalizedScores.get(date) ?? 0), 0) / 30;
 
-      // Fetch DSA problems for total count
-      const dsaQ = query(collection(db, 'dsa_problems'), where('userId', '==', user.uid));
-      const dsaSnapshot = await getDocs(dsaQ);
-      let totalProblems = dsaSnapshot.size;
-
-      setStats({
+      setStats(prev => ({
+        ...prev,
         streak: currentStreak,
-        weeklyConsistency,
-        monthlyConsistency,
-        totalProblems,
+        weeklyConsistency: Math.round(weeklyAverage),
+        monthlyConsistency: Math.round(monthlyAverage),
         missedDays: 30 - logs.length
-      });
-      setRecentLogs(logs.slice(0, 5));
-    };
+      }));
+      setRecentLogs(logs.slice(-5).reverse());
+    });
 
-    fetchStats();
+    const unsubscribeDsa = onSnapshot(dsaQ, (snapshot) => {
+      const firestoreCount = snapshot.size;
+      setStats(prev => ({
+        ...prev,
+        totalProblems: Math.max(firestoreCount, backupDsaNodes.filter((node: any) => node?.type === 'problem').length)
+      }));
+    });
+
+    return () => {
+      unsubscribeDaily();
+      unsubscribeDsa();
+    };
   }, [user]);
 
   return (
